@@ -1,0 +1,21 @@
+# HOA Docs — local storage (mirrors S3 layout in production)
+hoa-docs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+
+# OS
+Thumbs.db
+.DS_Store

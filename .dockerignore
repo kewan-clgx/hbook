@@ -1,0 +1,9 @@
+# Ignore for backend Docker build
+hoa-docs/
+frontend/
+doc/
+.git/
+__pycache__/
+*.pyc
+.env
+.venv/
