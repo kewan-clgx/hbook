@@ -126,6 +126,24 @@ def run_pipeline(
         "chunk_count": stage3["chunk_count"],
     }))
 
+    if stage3["chunk_count"] == 0:
+        total_ms = int((time.time() - pipeline_start) * 1000)
+        logger.error(json.dumps({
+            "event": "pipeline_failed", "doc_id": doc_id,
+            "hoa_id": hoa_id, "reason": "zero_chunks_after_parse",
+            "duration_ms": total_ms,
+        }))
+        return {
+            "doc_id": doc_id,
+            "hoa_id": hoa_id,
+            "document_type": document_type,
+            "total_duration_ms": total_ms,
+            "final_status": "failed_empty_parse",
+            "chunk_count": 0,
+            "error": "Parser returned no extractable content. Check PDF format and LlamaParse API key.",
+            "results": results,
+        }
+
     # ─── Stage 4: Tag Metadata ───────────────────────────────────────────────
     logger.info(json.dumps({
         "event": "stage_start", "stage": "tag", "doc_id": doc_id

@@ -52,6 +52,12 @@ def parse_document(
     # Combine all document pages into single markdown
     markdown_text = "\n\n".join(doc.text for doc in documents)
 
+    if not markdown_text.strip():
+        raise RuntimeError(
+            f"LlamaParse returned empty content for {raw_pdf_path.name} "
+            "(premium mode). Will retry with fallback."
+        )
+
     # Get layout JSON with bounding boxes (via extra result)
     layout_json = _get_layout_json(parser, raw_pdf_path)
 
@@ -126,6 +132,11 @@ def parse_document_fallback(
 
     documents = parser.load_data(str(raw_pdf_path))
     markdown_text = "\n\n".join(doc.text for doc in documents)
+
+    if not markdown_text.strip():
+        raise RuntimeError(
+            f"LlamaParse fallback also returned empty content for {raw_pdf_path.name}"
+        )
 
     output_dir = PARSED_DIR / hoa_id
     output_dir.mkdir(parents=True, exist_ok=True)
