@@ -29,6 +29,17 @@ def tag_chunks(
     Returns updated chunks data and validation report.
     """
     chunks_data = json.loads(Path(chunks_path).read_text(encoding="utf-8"))
+
+    if chunks_data.get("pipeline_status") == "tagged":
+        return {
+            "doc_id": doc_id,
+            "hoa_id": hoa_id,
+            "chunks_path": str(chunks_path),
+            "chunk_count": chunks_data.get("chunk_count", 0),
+            "validation_errors": [],
+            "status": "tagged_cached",
+        }
+
     chunks = chunks_data["chunks"]
 
     # Determine authority_rank
@@ -70,6 +81,7 @@ def tag_chunks(
 
     # Write enriched chunks back
     chunks_data["chunks"] = chunks
+    chunks_data["pipeline_status"] = "tagged"
     output_path = Path(chunks_path)
     output_path.write_text(json.dumps(chunks_data, indent=2), encoding="utf-8")
 

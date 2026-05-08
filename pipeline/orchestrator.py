@@ -17,6 +17,7 @@ from pipeline.stage2_parse import parse_document, parse_document_fallback
 from pipeline.stage3_chunk import chunk_markdown
 from pipeline.stage4_tag import tag_chunks
 from pipeline.stage5_index import index_chunks
+from pipeline import db
 
 logger = logging.getLogger("pipeline")
 logging.basicConfig(
@@ -66,6 +67,18 @@ def run_pipeline(
         "page_count": stage1["page_count"],
     }))
 
+    db.upsert_hoa(hoa_id, hoa_name)
+    db.insert_document(
+        doc_id=doc_id,
+        hoa_id=hoa_id,
+        original_filename=pdf_path.name,
+        document_type=document_type,
+        raw_path=stage1["raw_path"],
+        page_count=stage1["page_count"],
+        effective_date=effective_date,
+        supersedes_doc_id=supersedes_doc_id,
+    )
+
     # ─── Stage 2: Parse ──────────────────────────────────────────────────────
     logger.info(json.dumps({
         "event": "stage_start", "stage": "parse", "doc_id": doc_id
@@ -101,6 +114,8 @@ def run_pipeline(
         "duration_ms": int((time.time() - stage_start) * 1000),
         "parsed_pages": stage2.get("parsed_pages"),
     }))
+
+    db.update_document_status(doc_id, "parsed")
 
     # ─── Stage 3: Chunk ──────────────────────────────────────────────────────
     logger.info(json.dumps({
@@ -170,6 +185,8 @@ def run_pipeline(
         "validation_errors": len(stage4.get("validation_errors", [])),
     }))
 
+    db.update_document_status(doc_id, "tagged")
+
     # ─── Stage 5: Index ──────────────────────────────────────────────────────
     logger.info(json.dumps({
         "event": "stage_start", "stage": "index", "doc_id": doc_id
@@ -189,6 +206,8 @@ def run_pipeline(
         "duration_ms": int((time.time() - stage_start) * 1000),
         "indexed_count": stage5["indexed_count"],
     }))
+
+    db.update_document_status(doc_id, "indexed")
 
     # ─── Summary ─────────────────────────────────────────────────────────────
     total_duration_ms = int((time.time() - pipeline_start) * 1000)

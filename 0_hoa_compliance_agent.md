@@ -196,8 +196,8 @@ Before writing pipeline code, run this benchmark to confirm the LlamaParse-prima
 **Deliverable:** a written decision memo with scores, locked into the repo at `/docs/parser-decision.md`.
 
 ---
-
 ### 6.1 — Pipeline Architecture Overview
+
 
 The ingestion pipeline is a **5-stage sequential flow** with idempotent stages (each stage can be re-run on its output). Each stage writes to durable storage so failures are recoverable without reprocessing the previous stages.
 

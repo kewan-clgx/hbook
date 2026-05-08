@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -28,7 +28,6 @@ services:
       - ./hoa-docs:/app/hoa-docs
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/hoa_compliance
-      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       postgres:
@@ -44,7 +43,6 @@ services:
       - ./hoa-docs:/app/hoa-docs
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/hoa_compliance
-      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       postgres:

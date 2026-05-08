@@ -4,6 +4,7 @@ Accepts a PDF file, validates it, assigns a doc_id, and stores
 the raw PDF under hoa-docs/raw/{hoa_id}/{doc_id}.pdf.
 """
 
+import json
 import uuid
 import shutil
 from pathlib import Path
@@ -11,6 +12,18 @@ from datetime import date
 from typing import Optional
 
 from pipeline.config import RAW_DIR, MAX_FILE_SIZE_MB, MAX_PAGE_COUNT, VALID_DOCUMENT_TYPES
+
+_MANIFEST = ".manifest.json"
+
+
+def _load_manifest(dest_dir: Path) -> dict:
+    path = dest_dir / _MANIFEST
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _save_manifest(dest_dir: Path, manifest: dict) -> None:
+    path = dest_dir / _MANIFEST
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 class ValidationError(Exception):
@@ -87,21 +100,32 @@ def upload_and_validate(
     """
     validate_document_type(document_type)
     validate_effective_date(document_type, effective_date)
+
+    dest_dir = RAW_DIR / hoa_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Return cached result if this filename was already uploaded
+    manifest = _load_manifest(dest_dir)
+    if source_path.name in manifest:
+        cached = manifest[source_path.name]
+        # Repair raw_path if it was written in a different environment (e.g. Docker vs local)
+        expected_path = dest_dir / source_path.name
+        if cached["raw_path"] != str(expected_path) and expected_path.exists():
+            cached["raw_path"] = str(expected_path)
+            manifest[source_path.name] = cached
+            _save_manifest(dest_dir, manifest)
+        return cached
+
     validate_pdf_magic_bytes(source_path)
     validate_file_size(source_path)
     validate_not_encrypted(source_path)
     page_count = validate_page_count(source_path)
 
-    # Generate unique doc_id
     doc_id = str(uuid.uuid4())
-
-    # Store raw PDF
-    dest_dir = RAW_DIR / hoa_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / f"{doc_id}.pdf"
+    dest_path = dest_dir / source_path.name
     shutil.copy2(source_path, dest_path)
 
-    return {
+    result = {
         "doc_id": doc_id,
         "hoa_id": hoa_id,
         "document_type": document_type,
@@ -111,3 +135,6 @@ def upload_and_validate(
         "raw_path": str(dest_path),
         "status": "queued",
     }
+    manifest[source_path.name] = result
+    _save_manifest(dest_dir, manifest)
+    return result

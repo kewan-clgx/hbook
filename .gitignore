@@ -16,6 +16,9 @@ env/
 # Environment
 .env
 
+# Logs
+logs/
+
 # OS
 Thumbs.db
 .DS_Store

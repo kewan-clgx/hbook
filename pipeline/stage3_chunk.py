@@ -111,6 +111,18 @@ def chunk_markdown(md_path: Path, layout_path: Path, doc_id: str, hoa_id: str) -
 
     Returns the chunks JSON structure per §6.4.
     """
+    output_path = CHUNKS_DIR / hoa_id / f"{doc_id}_chunks.json"
+    if output_path.exists():
+        cached = json.loads(output_path.read_text(encoding="utf-8"))
+        if cached.get("pipeline_status") in ("chunked", "tagged"):
+            return {
+                "doc_id": doc_id,
+                "hoa_id": hoa_id,
+                "chunks_path": str(output_path),
+                "chunk_count": cached.get("chunk_count", 0),
+                "status": "chunked_cached",
+            }
+
     md_text = md_path.read_text(encoding="utf-8")
     layout_data = json.loads(layout_path.read_text(encoding="utf-8"))
 
@@ -199,6 +211,7 @@ def chunk_markdown(md_path: Path, layout_path: Path, doc_id: str, hoa_id: str) -
         "doc_id": doc_id,
         "hoa_id": hoa_id,
         "chunk_count": len(chunks),
+        "pipeline_status": "chunked",
         "chunks": chunks,
     }
 
@@ -239,25 +252,42 @@ def _attach_bounding_boxes(chunks: list[dict], layout_data: dict) -> None:
             chunk["page"] = 1
         return
 
-    # Build a text→bbox lookup from layout
-    text_bbox_map = {}
+    # Build ordered list of (value_snippet, bbox, page) from layout
+    # Ordered so the first layout item that appears inside the chunk wins.
+    layout_items: list[tuple[str, object, int]] = []
+    text_bbox_map: dict[str, dict] = {}
     for page_data in layout_data.get("pages", []):
         page_num = page_data.get("page", 1)
         for item in page_data.get("items", []):
-            text_snippet = item.get("value", "")[:80]
-            if text_snippet:
-                text_bbox_map[text_snippet] = {
-                    "bbox": item.get("bbox", [0, 0, 0, 0]),
-                    "page": page_num,
-                }
+            value = item.get("value", "")
+            if not value:
+                continue
+            bbox = item.get("bBox") or item.get("bbox") or [0, 0, 0, 0]
+            snippet = value[:80]
+            text_bbox_map[snippet] = {"bbox": bbox, "page": page_num}
+            layout_items.append((value, bbox, page_num))
 
     for chunk in chunks:
-        # Try to match first 80 chars of chunk text
-        snippet = chunk["text"][:80]
-        if snippet in text_bbox_map:
-            chunk["bounding_box"] = text_bbox_map[snippet]["bbox"]
-            chunk["page"] = text_bbox_map[snippet]["page"]
-        else:
+        chunk_text = chunk["text"]
+
+        # Strategy 1: prefix match — first 80 chars of chunk match a layout item value
+        match = text_bbox_map.get(chunk_text[:80])
+        if match:
+            chunk["bounding_box"] = match["bbox"]
+            chunk["page"] = match["page"]
+            continue
+
+        # Strategy 2: contains match — find the first layout item whose value
+        # appears anywhere in the chunk text (handles markdown-wrapped text from Docling)
+        found = False
+        for value, bbox, page_num in layout_items:
+            if len(value) >= 10 and value in chunk_text:
+                chunk["bounding_box"] = bbox
+                chunk["page"] = page_num
+                found = True
+                break
+
+        if not found:
             chunk.setdefault("bounding_box", [0, 0, 0, 0])
             chunk.setdefault("page", 1)
 

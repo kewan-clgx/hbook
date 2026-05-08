@@ -21,12 +21,21 @@ from pipeline.config import (
 )
 
 
+def _sentinel_path(doc_id: str) -> Path:
+    return CHROMA_PERSIST_DIR / ".indexed" / doc_id
+
+
 def index_chunks(chunks_path: Path, doc_id: str, hoa_id: str) -> dict:
     """
     Index all chunks into both Chroma (vector) and BM25 (keyword).
 
     Both must succeed or the batch is rejected.
     """
+    sentinel = _sentinel_path(doc_id)
+    if sentinel.exists():
+        cached = json.loads(sentinel.read_text(encoding="utf-8"))
+        return {**cached, "status": "indexed_cached"}
+
     chunks_data = json.loads(Path(chunks_path).read_text(encoding="utf-8"))
     chunks = chunks_data["chunks"]
 
@@ -44,38 +53,49 @@ def index_chunks(chunks_path: Path, doc_id: str, hoa_id: str) -> dict:
     # Index B: BM25 keyword index
     _index_bm25(chunks, hoa_id)
 
-    return {
+    result = {
         "doc_id": doc_id,
         "hoa_id": hoa_id,
         "indexed_count": len(chunks),
-        "status": "indexed",
     }
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(json.dumps(result), encoding="utf-8")
+
+    return {**result, "status": "indexed"}
+
+
+def _embed_one(text: str, task_type: str) -> list[float]:
+    """
+    Call embedContent REST endpoint directly.
+
+    The google-genai SDK always routes embed_content() through batchEmbedContents,
+    which gemini-embedding-* models don't support. Direct REST avoids this.
+    """
+    import requests
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/{EMBEDDING_MODEL}:embedContent"
+    resp = requests.post(
+        url,
+        params={"key": GEMINI_API_KEY},
+        json={
+            "model": EMBEDDING_MODEL,
+            "content": {"parts": [{"text": text}]},
+            "taskType": task_type,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["embedding"]["values"]
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings via Google Gemini."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    result = genai.embed_content(
-        model=EMBEDDING_MODEL,
-        content=texts,
-        task_type="RETRIEVAL_DOCUMENT",
-    )
-    return result["embedding"]
+    """Generate embeddings via Google Gemini (v1 embedContent, one call per text)."""
+    return [_embed_one(t, "RETRIEVAL_DOCUMENT") for t in texts]
 
 
 def _embed_query(text: str) -> list[float]:
-    """Generate a single query embedding via Google Gemini."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    result = genai.embed_content(
-        model=EMBEDDING_MODEL,
-        content=text,
-        task_type="RETRIEVAL_QUERY",
-    )
-    return result["embedding"]
+    """Generate a single query embedding via Google Gemini (v1 embedContent)."""
+    return _embed_one(text, "RETRIEVAL_QUERY")
 
 
 def _index_chroma(chunks: list[dict], hoa_id: str) -> None:
@@ -87,6 +107,13 @@ def _index_chroma(chunks: list[dict], hoa_id: str) -> None:
         name=f"hoa_{hoa_id}",
         metadata={"hnsw:space": "cosine"},
     )
+
+    # Purge any existing chunks for this doc before re-indexing
+    doc_id = chunks[0]["doc_id"]
+    try:
+        collection.delete(where={"doc_id": doc_id})
+    except Exception:
+        pass  # collection may be empty or where-filter unsupported on empty collection
 
     # Batch embeddings
     batch_size = 100
@@ -143,15 +170,17 @@ def _index_bm25(chunks: list[dict], hoa_id: str) -> None:
         existing_ids = json.loads(ids_path.read_text(encoding="utf-8"))
         existing_tokens = pickle.loads(index_path.read_bytes())
 
-    # Merge: remove any existing chunks with same IDs (upsert behavior)
+    # Merge: remove existing chunks for this doc_id (re-index) or same chunk ID (upsert)
+    doc_id = chunks[0]["doc_id"]
     new_id_set = set(chunk_ids)
     merged_ids = []
     merged_tokens = []
 
     for eid, etok in zip(existing_ids, existing_tokens):
-        if eid not in new_id_set:
-            merged_ids.append(eid)
-            merged_tokens.append(etok)
+        if eid in new_id_set or eid.startswith(f"{doc_id}::"):
+            continue
+        merged_ids.append(eid)
+        merged_tokens.append(etok)
 
     merged_ids.extend(chunk_ids)
     merged_tokens.extend(tokenized)
